@@ -1,14 +1,27 @@
 """Read single members out of a large remote zip using HTTP range requests."""
 
 import io
-import shutil
+import struct
 import zipfile
+import zlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+LOCAL_HEADER_SIZE = 30
+
+
+def fetch_range(url: str, start: int, end: int) -> bytes:
+    """Bytes start through end inclusive."""
+    with urlopen(Request(url, headers={"Range": f"bytes={start}-{end}"})) as response:
+        # A 200 here would mean the server ignored the range and is sending the whole file.
+        if response.status != 206:
+            raise OSError(f"{url} ignored the range request")
+        return response.read()
+
 
 class HttpRangeFile(io.RawIOBase):
-    """Seekable, read-only view of a remote file; each read is one ranged GET."""
+    """Seekable, read-only view of a remote file, enough for zipfile to read the index."""
 
     def __init__(self, url: str):
         self.url = url
@@ -39,33 +52,54 @@ class HttpRangeFile(io.RawIOBase):
         end = min(self.pos + len(buffer), self.size)
         if end <= self.pos:
             return 0
-        request = Request(self.url, headers={"Range": f"bytes={self.pos}-{end - 1}"})
-        with urlopen(request) as response:
-            # A 200 here would mean the server ignored the range and is sending the whole file.
-            if response.status != 206:
-                raise OSError(f"{self.url} ignored the range request")
-            data = response.read()
+        data = fetch_range(self.url, self.pos, end - 1)
         buffer[: len(data)] = data
         self.pos += len(data)
         return len(data)
 
 
 def open_remote_zip(url: str) -> zipfile.ZipFile:
-    return zipfile.ZipFile(io.BufferedReader(HttpRangeFile(url), buffer_size=1 << 18))
+    return zipfile.ZipFile(io.BufferedReader(HttpRangeFile(url), buffer_size=1 << 20))
 
 
-def extract(archive: zipfile.ZipFile, members: list[zipfile.ZipInfo], out_dir: Path) -> None:
-    """Extract members under out_dir, skipping files already present at full size."""
-    for i, info in enumerate(members, 1):
+def fetch_member(url: str, info: zipfile.ZipInfo) -> bytes:
+    """A member's contents in two ranged GETs (local header, then data), CRC checked."""
+    header = fetch_range(url, info.header_offset, info.header_offset + LOCAL_HEADER_SIZE - 1)
+    name_len, extra_len = struct.unpack_from("<HH", header, 26)
+    start = info.header_offset + LOCAL_HEADER_SIZE + name_len + extra_len
+    data = fetch_range(url, start, start + info.compress_size - 1)
+    match info.compress_type:
+        case zipfile.ZIP_STORED:
+            pass
+        case zipfile.ZIP_DEFLATED:
+            data = zlib.decompress(data, wbits=-15)
+        case other:
+            raise ValueError(f"{info.filename} uses unsupported compression {other}")
+    if zlib.crc32(data) != info.CRC:
+        raise OSError(f"{info.filename} failed its CRC check")
+    return data
+
+
+def extract(url: str, members: list[zipfile.ZipInfo], out_dir: Path, workers: int = 4) -> None:
+    """Fetch members into out_dir in parallel, skipping files already present at full size."""
+
+    def present(info: zipfile.ZipInfo) -> bool:
         target = out_dir / info.filename
-        if target.exists() and target.stat().st_size == info.file_size:
-            continue
+        return target.exists() and target.stat().st_size == info.file_size
+
+    todo = [m for m in members if not present(m)]
+
+    def save(info: zipfile.ZipInfo) -> str:
+        target = out_dir / info.filename
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_name(target.name + ".part")
-        with archive.open(info) as src, partial.open("wb") as dst:
-            shutil.copyfileobj(src, dst, 1 << 20)
+        partial.write_bytes(fetch_member(url, info))
         partial.replace(target)
-        print(f"[{i}/{len(members)}] {info.filename}", flush=True)
+        return info.filename
+
+    with ThreadPoolExecutor(workers) as pool:
+        for i, name in enumerate(pool.map(save, todo), 1):
+            print(f"[{i}/{len(todo)}] {name}", flush=True)
 
 
 def total_gb(members: list[zipfile.ZipInfo]) -> float:

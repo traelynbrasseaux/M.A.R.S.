@@ -30,8 +30,8 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=DATA_DIR / "mafaulda")
     args = parser.parse_args()
 
-    normal_zip = open_remote_zip(URL.format(name="normal"))
-    fault_zip = open_remote_zip(URL.format(name=args.fault))
+    normal_url, fault_url = URL.format(name="normal"), URL.format(name=args.fault)
+    normal_zip, fault_zip = open_remote_zip(normal_url), open_remote_zip(fault_url)
     normal = spread([i for i in normal_zip.infolist() if i.filename.endswith(".csv")], args.normal)
     faults = []
     for cls in args.classes:
@@ -49,8 +49,8 @@ def main() -> None:
     print(f"{len(normal)} normal and {len(faults)} {args.fault} records, {size:.2f} GB to download")
     if size > args.max_gb:
         raise SystemExit(f"{size:.2f} GB is over --max-gb {args.max_gb}, not downloading")
-    extract(normal_zip, normal, args.out)
-    extract(fault_zip, faults, args.out)
+    extract(normal_url, normal, args.out)
+    extract(fault_url, faults, args.out)
 
 
 if __name__ == "__main__":

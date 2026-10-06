@@ -19,7 +19,8 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=DATA_DIR / "mimii")
     args = parser.parse_args()
 
-    archive = open_remote_zip(URL.format(snr=args.snr, machine=args.machine))
+    url = URL.format(snr=args.snr, machine=args.machine)
+    archive = open_remote_zip(url)
     files = sorted((i for i in archive.infolist() if not i.is_dir()), key=lambda i: i.filename)
     members = []
     for label, count in [("normal", args.normal), ("abnormal", args.abnormal)]:
@@ -30,7 +31,7 @@ def main() -> None:
     print(f"{len(members)} clips, {size:.2f} GB to download")
     if size > args.max_gb:
         raise SystemExit(f"{size:.2f} GB is over --max-gb {args.max_gb}, not downloading")
-    extract(archive, members, args.out / f"{args.snr}dB")
+    extract(url, members, args.out / f"{args.snr}dB")
 
 
 if __name__ == "__main__":
