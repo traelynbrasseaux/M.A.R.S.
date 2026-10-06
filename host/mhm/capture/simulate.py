@@ -17,8 +17,11 @@ BAUD = 921600
 
 HARMONIC_G = np.array([0.05, 0.03, 0.015])  # 1x, 2x, 3x shaft order amplitudes
 AXIS_GAIN = np.array([1.0, 0.8, 0.4])  # x and y radial, z axial
+# Harmonic phases belong to the machine, not the run, so they stay fixed across seeds.
+HARMONIC_PHASE = np.array([[0.0, 1.6, 0.4], [2.1, 0.7, 3.0], [1.2, 2.6, 0.9]])
 ACCEL_NOISE_G = 0.02
 BLADE_TONES = np.array([0.05, 0.03, 0.02, 0.01])  # blade pass harmonics, fraction of full scale
+BLADE_PHASE = np.array([0.0, 1.3, 2.4, 0.6])
 AUDIO_NOISE = 0.01
 SPEED_WANDER = 0.01  # +/-1% speed drift
 WANDER_PERIOD_S = 37.0
@@ -39,13 +42,13 @@ class FakeNode:
     def __init__(self, cfg: SimConfig):
         self.cfg = cfg
         self.rng = np.random.default_rng(cfg.seed)
-        self.accel_phase = self.rng.uniform(0, 2 * np.pi, size=(len(HARMONIC_G), 3))
-        self.audio_phase = self.rng.uniform(0, 2 * np.pi, size=len(BLADE_TONES))
+        self.wander_start = self.rng.uniform(0, WANDER_PERIOD_S)
         self.seq = dict.fromkeys(StreamType, 0)
 
     def shaft_phase(self, t: np.ndarray) -> np.ndarray:
         """Shaft angle in radians, with the speed wandering slowly around rotation_hz."""
         w = 2 * np.pi / WANDER_PERIOD_S
+        t = t + self.wander_start
         return 2 * np.pi * self.cfg.rotation_hz * (t - SPEED_WANDER / w * np.cos(w * t))
 
     def accel(self, start: int, n: int) -> np.ndarray:
@@ -55,7 +58,7 @@ class FakeNode:
         if self.cfg.unbalance:
             amp[0] *= self.cfg.unbalance_gain
         orders = np.arange(1, len(HARMONIC_G) + 1)
-        angles = orders[None, :, None] * shaft[:, None, None] + self.accel_phase[None]
+        angles = orders[None, :, None] * shaft[:, None, None] + HARMONIC_PHASE[None]
         g = np.sum(amp[None] * np.sin(angles), axis=1)
         g += self.rng.normal(0, ACCEL_NOISE_G, size=g.shape)
         g[:, 2] += 1.0  # gravity on z
@@ -65,7 +68,7 @@ class FakeNode:
         t = (start + np.arange(n)) / AUDIO_FS
         shaft = self.shaft_phase(t)
         orders = self.cfg.blades * np.arange(1, len(BLADE_TONES) + 1)
-        tones = BLADE_TONES @ np.sin(orders[:, None] * shaft[None, :] + self.audio_phase[:, None])
+        tones = BLADE_TONES @ np.sin(orders[:, None] * shaft[None, :] + BLADE_PHASE[:, None])
         if self.cfg.unbalance:
             tones *= 1 + 0.6 * np.sin(shaft)
         x = tones + self.rng.normal(0, AUDIO_NOISE, size=n)
