@@ -1,0 +1,34 @@
+# Captures, datasets, logs, and generated results stay local
+data/
+logs/
+host/results/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# PlatformIO
+.pio/
+firmware/**/.vscode/
+
+# Large binaries
+*.bin
+*.wav
+*.zip
+*.tar
+*.tar.gz
+*.npy
+*.npz
+*.h5
+*.pkl
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
