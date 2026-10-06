@@ -85,7 +85,12 @@ def record(
     if path.exists():
         raise FileExistsError(f"{path} already exists, use the next --run number")
 
-    ser = None if port == "-" else serial.serial_for_url(port, baudrate=BAUD, timeout=0.1)
+    ser = None
+    if port != "-":
+        ser = serial.serial_for_url(port, baudrate=BAUD, timeout=0.1, do_not_open=True)
+        # Low DTR and RTS keep the board's auto-reset circuit from rebooting the ESP32 on open.
+        ser.dtr = ser.rts = False
+        ser.open()
     stats = LiveStats()
     start_utc = datetime.now(UTC)
     start = last_report = time.monotonic()
