@@ -1,23 +1,35 @@
 """Read single members out of a large remote zip using HTTP range requests."""
 
 import io
+import itertools
 import struct
+import time
 import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 LOCAL_HEADER_SIZE = 30
+MAX_RETRIES = 6
 
 
 def fetch_range(url: str, start: int, end: int) -> bytes:
-    """Bytes start through end inclusive."""
-    with urlopen(Request(url, headers={"Range": f"bytes={start}-{end}"})) as response:
-        # A 200 here would mean the server ignored the range and is sending the whole file.
-        if response.status != 206:
-            raise OSError(f"{url} ignored the range request")
-        return response.read()
+    """Bytes start through end inclusive, waiting out rate limits (Zenodo returns 429)."""
+    request = Request(url, headers={"Range": f"bytes={start}-{end}"})
+    for attempt in itertools.count():
+        try:
+            with urlopen(request) as response:
+                # A 200 here would mean the server ignored the range and is sending the whole file.
+                if response.status != 206:
+                    raise OSError(f"{url} ignored the range request")
+                return response.read()
+        except HTTPError as e:
+            if e.code not in (429, 503) or attempt == MAX_RETRIES:
+                raise
+            retry_after = e.headers.get("Retry-After", "")
+            time.sleep(int(retry_after) if retry_after.isdigit() else 2**attempt)
 
 
 class HttpRangeFile(io.RawIOBase):

@@ -1,6 +1,7 @@
 import io
 import zipfile
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -31,3 +32,21 @@ def test_extract_skips_complete_files(served_zip: zipfile.ZipFile, tmp_path: Pat
     (tmp_path / "a" / "stored.bin").write_bytes(b"truncated")
     remote_zip.extract("url", members, tmp_path)
     assert (tmp_path / "a" / "stored.bin").read_bytes() == bytes(range(256)) * 4
+
+
+def test_fetch_range_waits_out_rate_limit(monkeypatch: pytest.MonkeyPatch):
+    class Response(io.BytesIO):
+        status = 206
+
+    calls, sleeps = [], []
+
+    def fake_urlopen(request):
+        calls.append(request)
+        if len(calls) < 3:
+            raise HTTPError(request.full_url, 429, "TOO MANY REQUESTS", {"Retry-After": "7"}, None)
+        return Response(b"abc")
+
+    monkeypatch.setattr(remote_zip, "urlopen", fake_urlopen)
+    monkeypatch.setattr(remote_zip.time, "sleep", sleeps.append)
+    assert remote_zip.fetch_range("http://example.invalid/x.zip", 0, 2) == b"abc"
+    assert sleeps == [7, 7]
