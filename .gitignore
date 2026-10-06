@@ -15,6 +15,7 @@ dist/
 
 # PlatformIO
 .pio/
+firmware/**/compile_commands.json
 firmware/**/.vscode/
 
 # Large binaries
