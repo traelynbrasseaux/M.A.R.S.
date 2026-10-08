@@ -16,7 +16,8 @@ constexpr uint32_t kBaud = 921600;
 constexpr uint8_t kAccelDrainAt = 16;  // half the FIFO, so a late poll still has 5 ms of slack
 constexpr uint32_t kHealthPeriodMs = 10000;
 
-SPIClass accelSpi(HSPI);
+// VSPI for the accelerometer leaves HSPI free for the LoRa module, so radio traffic never stalls it.
+SPIClass accelSpi(VSPI);
 Adxl345 accel(accelSpi, PIN_ADXL_CS);
 Inmp441 mic;
 
@@ -94,18 +95,7 @@ void audioTask(void*) {
   }
 }
 
-bool pinsSet(std::initializer_list<int> pins) {
-  for (int p : pins) {
-    if (p < 0) return false;
-  }
-  return true;
-}
-
 void startAccel() {
-  if (!pinsSet({PIN_ADXL_SCK, PIN_ADXL_MISO, PIN_ADXL_MOSI, PIN_ADXL_CS})) {
-    logf("adxl345 pins not set in pins.h, accel disabled");
-    return;
-  }
   const uint8_t devid = accel.begin(PIN_ADXL_SCK, PIN_ADXL_MISO, PIN_ADXL_MOSI);
   if (devid != Adxl345::kDevId) {
     logf("adxl345 devid 0x%02X, expected 0x%02X, accel disabled", devid, Adxl345::kDevId);
@@ -116,10 +106,6 @@ void startAccel() {
 }
 
 void startAudio() {
-  if (!pinsSet({PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD})) {
-    logf("inmp441 pins not set in pins.h, audio disabled");
-    return;
-  }
   const esp_err_t err = mic.begin(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD);
   if (err != ESP_OK) {
     logf("i2s setup failed (%s), audio disabled", esp_err_to_name(err));
@@ -137,12 +123,6 @@ void setup() {
   txQueue = xQueueCreate(16, sizeof(frame::Frame));
   xTaskCreatePinnedToCore(txTask, "tx", 4096, nullptr, 3, nullptr, 0);
   logf("mhm node, frame format v%u", frame::kVersion);
-
-  if (PIN_VEXT_CTRL >= 0) {
-    pinMode(PIN_VEXT_CTRL, OUTPUT);
-    digitalWrite(PIN_VEXT_CTRL, LOW);  // Vext is active low on the Heltec V3
-    delay(100);
-  }
   startAccel();
   startAudio();
 }

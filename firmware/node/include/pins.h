@@ -1,17 +1,27 @@
-// Sensor wiring for the node. Keep in sync with the pin map in docs/interface.md.
-// A sensor whose pins are still -1 is skipped at boot and reported in a log frame.
+// Node wiring by the GPIO numbers on the dev board's silkscreen; mirrors docs/interface.md.
 #pragma once
 
-// TODO(Martin): ADXL345 on its own SPI bus, separate from the LoRa radio's.
-constexpr int PIN_ADXL_SCK = -1;
-constexpr int PIN_ADXL_MOSI = -1;  // ADXL345 SDA/SDI
-constexpr int PIN_ADXL_MISO = -1;  // ADXL345 SDO
-constexpr int PIN_ADXL_CS = -1;
+// ADXL345 (GY-291 module) on VSPI, SPI mode 3. The module pulls CS high, so GPIO 5 boots safely.
+constexpr int PIN_ADXL_SCK = 18;
+constexpr int PIN_ADXL_MISO = 19;  // module pin SDO
+constexpr int PIN_ADXL_MOSI = 23;  // module pin SDA
+constexpr int PIN_ADXL_CS = 5;
+constexpr int PIN_ADXL_INT1 = 34;  // wired but unused: the firmware polls FIFO_STATUS
 
-// TODO(Martin): INMP441 over I2S, with its L/R pin tied to GND.
-constexpr int PIN_MIC_SCK = -1;
-constexpr int PIN_MIC_WS = -1;
-constexpr int PIN_MIC_SD = -1;
+// INMP441 on I2S, with its L/R pin tied to GND for the left slot.
+constexpr int PIN_MIC_SCK = 26;
+constexpr int PIN_MIC_WS = 25;
+constexpr int PIN_MIC_SD = 33;
 
-// TODO(Martin): set to 36 if the sensors run from Vext; -1 leaves Vext untouched.
-constexpr int PIN_VEXT_CTRL = -1;
+// Onboard parts, not used by the firmware yet.
+constexpr int PIN_LED = 2;
+constexpr int PIN_BUTTON = 0;  // BOOT button, usable as an input after startup
+
+// Reserved for a later LoRa module on HSPI, skipping GPIO 12 (high at boot blocks startup).
+constexpr int PIN_LORA_SCK = 14;
+constexpr int PIN_LORA_MISO = 27;
+constexpr int PIN_LORA_MOSI = 13;
+constexpr int PIN_LORA_CS = 4;
+constexpr int PIN_LORA_RST = 32;
+constexpr int PIN_LORA_IRQ = 35;
+constexpr int PIN_LORA_BUSY = 39;  // SX1262 only

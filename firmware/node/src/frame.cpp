@@ -30,7 +30,7 @@ static size_t bytesPerSample(Stream stream) {
 
 void encode(Frame& out, Stream stream, uint32_t seq, uint64_t timestamp_us, const void* payload,
             size_t payload_len) {
-  // Fields are copied as-is because the ESP32-S3 is little-endian, like the wire format.
+  // Fields are copied as-is because the ESP32 is little-endian, like the wire format.
   uint8_t* p = out.bytes;
   const uint16_t count = static_cast<uint16_t>(payload_len / bytesPerSample(stream));
   p[0] = 0xA5;
