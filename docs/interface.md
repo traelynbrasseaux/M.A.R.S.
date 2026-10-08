@@ -4,13 +4,13 @@ This is the contract between the node firmware (`firmware/node/`) and the host t
 
 ## Link
 
-- UART0 through the Heltec V3's USB-UART bridge, 921600 baud, 8N1, no flow control.
+- UART0 through the dev board's CP2102 USB-UART chip, 921600 baud, 8N1, no flow control. 921600 is at the top of the CP2102's range, so don't plan on raising the baud rate later. Windows and macOS may need the Silicon Labs CP210x driver.
 - The node streams binary frames continuously from boot. There is no command channel yet.
 - The ROM bootloader prints text at 115200 baud on reset. The host parser skips anything that is not a valid frame, so that text is harmless.
 
 ## Frame format (version 1)
 
-All multi-byte fields are little-endian (the ESP32-S3's native order).
+All multi-byte fields are little-endian (the ESP32's native order).
 
 | Offset | Size | Field          | Notes |
 |-------:|-----:|----------------|-------|
@@ -120,19 +120,32 @@ The `.bin` file is the raw byte stream exactly as received, including any garbag
 
 ## Pin map
 
-**TODO (Martin):** fill this in once the breadboard works, and copy the same numbers into `firmware/node/include/pins.h`.
+The node is an ELEGOO ESP-WROOM-32 dev board (original ESP32, CP2102, USB-C). Pins are the GPIO numbers on the board's silkscreen, and `firmware/node/include/pins.h` must match this table.
 
-| Signal | Sensor pin | ESP32-S3 GPIO | Notes |
-|--------|-----------|---------------|-------|
-| ADXL345 SPI clock | SCL/SCLK | TODO | SPI mode 3, firmware uses 5 MHz |
-| ADXL345 SPI data in | SDA/SDI | TODO | MOSI |
-| ADXL345 SPI data out | SDO | TODO | MISO |
-| ADXL345 chip select | CS | TODO | must be driven, not tied low |
-| ADXL345 interrupt | INT1 | not used | firmware polls `FIFO_STATUS` instead |
-| INMP441 bit clock | SCK | TODO | 1.024 MHz at 16 kHz |
-| INMP441 word select | WS | TODO | |
-| INMP441 data | SD | TODO | |
-| INMP441 channel | L/R | GND | selects the left slot |
-| Sensor power | VCC/VDD | TODO | 3V3 pin, or Vext (then set `PIN_VEXT_CTRL` to 36) |
+| Signal | Module pin | ESP32 GPIO | Notes |
+|--------|-----------|------------|-------|
+| **ADXL345 (GY-291), on VSPI** | | | |
+| SPI clock | SCL | 18 | SPI mode 3, firmware runs 5 MHz (the chip's maximum) |
+| SPI data out (MISO) | SDO | 19 | |
+| SPI data in (MOSI) | SDA | 23 | labelled for I2C, acts as data in for SPI |
+| Chip select | CS | 5 | the module pulls it high, so boot is safe |
+| FIFO interrupt | INT1 | 34 | wired but unused: the firmware polls `FIFO_STATUS` |
+| Power | VCC / GND | 3V3 / GND | |
+| **INMP441, on I2S** | | | |
+| Bit clock | SCK | 26 | 1.024 MHz at 16 kHz |
+| Word select | WS | 25 | |
+| Data | SD | 33 | |
+| Channel select | L/R | GND | selects the left slot |
+| Power | VDD / GND | 3V3 / GND | |
+| **Onboard, not used yet** | | | |
+| Status LED | | 2 | |
+| BOOT button | | 0 | usable as an input after startup |
+| **Reserved for a LoRa module on HSPI (keep free)** | | | |
+| SPI clock / MISO / MOSI / CS | | 14 / 27 / 13 / 4 | moved off GPIO 12, which can stop the board booting |
+| Reset / IRQ / Busy | | 32 / 35 / 39 | Busy exists only on the SX1262 |
+| **Gateway board only** | | | |
+| OLED SDA / SCL | | 21 / 22 | SSD1306 display |
 
-Pins already used on the Heltec V3, per Heltec's pinout (check against your board): LoRa SX1262 on 8 to 14, OLED on 17, 18, and 21, LED on 35, Vext control on 36, battery sense on 1 and 37, USB on 19 and 20, UART0 on 43 and 44. Avoid the strapping pins 0, 3, 45, and 46.
+The map stays off the flash pins (6 to 11) and the boot strapping pins 12 and 15, and uses the input-only pins 34, 35 and 39 only for inputs. The ADXL345 needs SPI rather than I2C to keep up at 3200 Hz, and the accelerometer gets its own bus so LoRa traffic never stalls its reads.
+
+Wiring for clean data: screw or epoxy the ADXL345 module to a rigid plate on the magnet and run short wires (under about 20 cm) to a breadboard kept off the machine. A sensor sitting on a breadboard measures the breadboard, and long loose jumpers cause SPI errors at 5 MHz.
