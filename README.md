@@ -2,7 +2,7 @@
 
 A magnet-mounted sensor node that learns a machine's normal vibration and sound signature and flags anomalies such as rotor unbalance, loose mounting, and pump intake clogs. Built for the Nexus Technology Cup (finals December 14 to 16, 2026).
 
-The node is a Heltec WiFi LoRa 32 V3 (ESP32-S3) with an ADXL345 accelerometer (3200 Hz, SPI) and an INMP441 microphone (16 kHz, I2S). Right now it streams raw samples to a laptop over UART so the features and models can be developed on the host. Later phases add LoRa alerts to a gateway and move feature extraction and HDC scoring into Verilog for an iCE40 UP5K and SKY130.
+The node is an ELEGOO ESP-WROOM-32 dev board (original ESP32 with a CP2102 USB-UART chip) carrying an ADXL345 accelerometer (3200 Hz, SPI) and an INMP441 microphone (16 kHz, I2S). Right now it streams raw samples to a laptop over UART so the features and models can be developed on the host. Later phases add radio alerts to a gateway (ESP-NOW for the first prototype, then a LoRa module) and move feature extraction and HDC scoring into Verilog for an iCE40 UP5K and SKY130.
 
 ## Layout
 
@@ -83,4 +83,4 @@ pio run                  # build
 pio run -t upload        # flash over USB
 ```
 
-Until the pins in `include/pins.h` are filled in, the node boots, reports each disabled sensor in a log frame, and streams nothing else.
+Windows and macOS may need the Silicon Labs CP210x driver before the board shows up as a serial port. Pins are in `include/pins.h`, and the wiring table is in [interface.md](docs/interface.md#pin-map). At boot the node reports each sensor in a log frame; if one fails its check (for example the ADXL345 ID read), the node says so and keeps streaming the other.

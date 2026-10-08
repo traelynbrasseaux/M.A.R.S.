@@ -22,7 +22,7 @@ Tokens are lowercase `a-z`, `0-9`, and `-`. Add new values here before using the
 
 ## Recording routine
 
-1. Mount the node at the marked spot and photograph it once per session.
+1. Mount the sensor plate at the marked spot and photograph it once per session. Only the rigid ADXL345 plate goes on the machine; the breadboard and ESP32 sit off it, on wires under about 20 cm.
 2. Let the machine run for 2 minutes before recording so temperature and speed settle.
 3. Record 120 s per run (`--duration 120`).
 4. Record at least 3 `normal` runs per speed, and remount the node between at least two of them so the model learns mounting variation rather than one exact placement.
