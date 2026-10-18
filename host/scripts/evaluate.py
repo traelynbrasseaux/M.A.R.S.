@@ -2,9 +2,10 @@
 
 import argparse
 import csv
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 
 import matplotlib
 import numpy as np
@@ -12,7 +13,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from mhm import DATA_DIR, RESULTS_DIR
+from mhm import DATA_DIR, RESULTS_DIR, device_ml
 from mhm.capture.loader import load_capture
 from mhm.datasets import mafaulda, mimii
 from mhm.features.audio import AudioConfig, audio_features
@@ -42,6 +43,34 @@ class Item:
     features: np.ndarray  # (windows, features)
 
 
+Featurize = Callable[[str, np.ndarray, float], np.ndarray]
+
+
+def python_features(kind: str, signal: np.ndarray, fs: float) -> np.ndarray:
+    if kind == "accel":
+        cfg = VibrationConfig(fs=fs)
+        return vibration_features(frames(signal, cfg.size, cfg.hop), cfg)
+    cfg = AudioConfig(fs=fs)
+    return audio_features(frames(signal, cfg.size, cfg.hop), cfg)
+
+
+@dataclass
+class DeviceModel:
+    """One score column of the node's C++ models, trained in its two phases on halves of train."""
+
+    column: int
+    stats: np.ndarray = field(init=False, repr=False)
+    bundle: np.ndarray = field(init=False, repr=False)
+
+    def fit(self, normal_windows: np.ndarray) -> Self:
+        half = len(normal_windows) // 2
+        self.stats, self.bundle = normal_windows[:half], normal_windows[half:]
+        return self
+
+    def score(self, windows: np.ndarray) -> np.ndarray:
+        return device_ml.scores(self.stats, self.bundle, windows)[:, self.column]
+
+
 @dataclass
 class Result:
     model: str
@@ -54,44 +83,38 @@ class Result:
     scores: np.ndarray
 
 
-def mimii_items(args: argparse.Namespace) -> Iterator[Item]:
-    cfg = AudioConfig()
+def mimii_items(args: argparse.Namespace, featurize: Featurize) -> Iterator[Item]:
     root = args.root or DATA_DIR / "mimii" / f"{args.snr}dB"
     for clip in mimii.list_clips(root, args.machine, args.machine_id):
         x, fs = mimii.load_wav(clip.path)
-        if fs != cfg.fs:
-            raise ValueError(f"{clip.path} is {fs} Hz, expected {cfg.fs:g}")
+        if fs != AudioConfig().fs:
+            raise ValueError(f"{clip.path} is {fs} Hz, expected {AudioConfig().fs:g}")
         name = f"{clip.path.parent.name}/{clip.path.name}"
-        yield Item(name, name, clip.abnormal, audio_features(frames(x, cfg.size, cfg.hop), cfg))
+        yield Item(name, name, clip.abnormal, featurize("audio", x, fs))
 
 
-def mafaulda_items(args: argparse.Namespace) -> Iterator[Item]:
+def mafaulda_items(args: argparse.Namespace, featurize: Featurize) -> Iterator[Item]:
     root = args.root or DATA_DIR / "mafaulda"
     for clip in mafaulda.list_clips(root, args.fault):
         x, fs = mafaulda.load_vibration(clip.path)
-        cfg = VibrationConfig(fs=fs)
         name = clip.path.relative_to(root).as_posix()
-        yield Item(name, name, clip.abnormal, vibration_features(frames(x, cfg.size, cfg.hop), cfg))
+        yield Item(name, name, clip.abnormal, featurize("accel", x, fs))
 
 
-def capture_items(args: argparse.Namespace) -> Iterator[Item]:
+def capture_items(args: argparse.Namespace, featurize: Featurize) -> Iterator[Item]:
     """Cut each capture in captures.csv into fixed-length segments labelled by condition."""
     root = args.root or DATA_DIR / "captures"
     with (root / "captures.csv").open(newline="") as f:
         rows = list(csv.DictReader(f))
     for row in rows:
         capture = load_capture(root / row["file"])
-        match args.stream:
-            case "accel":
-                stream, cfg, featurize = capture.accel, VibrationConfig(), vibration_features
-            case "audio":
-                stream, cfg, featurize = capture.audio, AudioConfig(), audio_features
+        stream = capture.accel if args.stream == "accel" else capture.audio
         length = int(args.segment_s * stream.fs)
         for i, segment in enumerate(stream.segments()):
             signal = segment if args.stream == "accel" else segment[:, 0]
             for j in range(len(signal) // length):
                 piece = signal[j * length : (j + 1) * length]
-                features = featurize(frames(piece, cfg.size, cfg.hop), cfg)
+                features = featurize(args.stream, piece, stream.fs)
                 yield Item(
                     f"{row['file']}:{i}:{j}", row["file"], row["condition"] != "normal", features
                 )
@@ -236,19 +259,31 @@ def main() -> None:
     parser.add_argument("--max-fpr", type=float, default=0.1, help="pAUC FPR limit")
     parser.add_argument("--threshold-quantile", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=0, help="train and test split seed")
+    parser.add_argument(
+        "--backend",
+        default="python",
+        choices=["python", "device"],
+        help="device runs the node's C++ features and models through the native build",
+    )
     parser.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = parser.parse_args()
 
+    featurize: Featurize = python_features
+    if args.backend == "device":
+        device_ml.build()
+        featurize = device_ml.features
     match args.dataset:
         case "mimii":
-            items = list(mimii_items(args))
+            items = list(mimii_items(args, featurize))
             tag = f"mimii_{args.machine}_{args.machine_id}_{args.snr}dB"
         case "mafaulda":
-            items = list(mafaulda_items(args))
+            items = list(mafaulda_items(args, featurize))
             tag = f"mafaulda_{args.fault}"
         case "captures":
-            items = list(capture_items(args))
+            items = list(capture_items(args, featurize))
             tag = f"captures_{args.stream}"
+    if args.backend == "device":
+        tag += "_device"
     if not items:
         raise SystemExit("no data found; run the download script or a capture first")
 
@@ -263,6 +298,8 @@ def main() -> None:
         "hdc-binary": HdcScorer(dim=args.hdc_dim, mode="binary"),
         "hdc-bipolar": HdcScorer(dim=args.hdc_dim, mode="bipolar"),
     }
+    if args.backend == "device":
+        models = {name: DeviceModel(i) for i, name in enumerate(models)}
     results = evaluate(models, train, calibration, test, args.max_fpr, args.threshold_quantile)
 
     header = f"{'model':<12} {'AUC':>6} {'pAUC':>6} {'detect':>7} {'false alarm':>12}"
