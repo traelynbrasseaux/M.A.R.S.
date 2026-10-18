@@ -12,7 +12,7 @@ The node is an ELEGOO ESP-WROOM-32 dev board (original ESP32 with a CP2102 USB-U
 | `host/` | Python package `mhm` (uv, Python 3.12): capture tool, simulator, features, models, dataset loaders |
 | `host/scripts/` | Dataset download scripts and `evaluate.py` |
 | `rtl/` | Verilog, starting in Week 4 |
-| `docs/` | [Node to host interface](docs/interface.md) and [capture conventions](docs/capture-conventions.md) |
+| `docs/` | [Node to host interface](docs/interface.md), [capture conventions](docs/capture-conventions.md), and [evaluation results](docs/evaluation-results.md) |
 | `data/`, `logs/` | Captures, datasets, and logs (gitignored) |
 
 ## Setup
