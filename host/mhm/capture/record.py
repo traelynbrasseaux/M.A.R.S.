@@ -11,7 +11,7 @@ from pathlib import Path
 
 import serial
 
-from mhm.capture.frame import FrameParser, SequenceTracker, StreamType
+from mhm.capture.frame import MODELS, PHASES, SCORE, FrameParser, SequenceTracker, StreamType
 
 BAUD = 921600
 TOKEN = re.compile(r"[a-z0-9-]+")
@@ -61,6 +61,20 @@ class LiveStats:
     tracker: SequenceTracker = field(default_factory=SequenceTracker)
     frames: Counter[StreamType] = field(default_factory=Counter)
     bytes: int = 0
+    ml: dict[int, tuple[int, int]] = field(default_factory=dict)  # stream -> (phase, alert bits)
+
+    def ml_change(self, payload: bytes) -> str | None:
+        """A line on the node's detector state, only when that stream's state changed."""
+        stream, phase, alerts = SCORE.unpack(payload)[:3]
+        if self.ml.get(stream) == (phase, alerts):
+            return None
+        self.ml[stream] = (phase, alerts)
+        flagged = [model for m, model in enumerate(MODELS) if alerts >> m & 1]
+        if flagged:
+            state = "ALERT " + ", ".join(flagged)
+        else:
+            state = "ok" if PHASES[phase] == "detect" else ""
+        return f"[ml] {StreamType(stream).name.lower()} {PHASES[phase]} {state}".rstrip()
 
     def summary(self, elapsed: float, rates: dict[StreamType, float]) -> str:
         dropped = sum(self.tracker.dropped.values())
@@ -78,8 +92,11 @@ def record(
     out_dir: Path,
     duration: float | None = None,
     notes: str = "",
+    commands: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Capture until duration, Ctrl+C, or end of stdin; return the captures.csv row."""
+    if commands and port == "-":
+        raise ValueError("--send needs a serial port; stdin has no way back to the node")
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / name.filename
     if path.exists():
@@ -91,6 +108,12 @@ def record(
         # Low DTR and RTS keep the board's auto-reset circuit from rebooting the ESP32 on open.
         ser.dtr = ser.rts = False
         ser.open()
+        for command in commands:
+            ser.write(f"{command}\n".encode())
+            print(f"sent: {command}")
+    # The index records what the run was told to do, which matters when reading it back later.
+    sent = [f"sent {c}" for c in commands]
+    notes = "; ".join([notes, *sent]) if notes else "; ".join(sent)
     stats = LiveStats()
     start_utc = datetime.now(UTC)
     start = last_report = time.monotonic()
@@ -114,6 +137,9 @@ def record(
                     if frame.stream == StreamType.LOG:
                         text = frame.payload.decode("utf-8", errors="replace")
                         print(f"\r[node] {text}".ljust(100))
+                    elif frame.stream == StreamType.SCORE:
+                        if line := stats.ml_change(frame.payload):
+                            print(f"\r{line}".ljust(100))
                 now = time.monotonic()
                 if (dt := now - last_report) >= 1.0:
                     rates = {k: (stats.frames[k] - last_frames[k]) / dt for k in StreamType}

@@ -20,9 +20,19 @@ class StreamType(IntEnum):
     ACCEL = 1
     AUDIO = 2
     LOG = 3
+    SCORE = 4
 
 
-BYTES_PER_SAMPLE = {StreamType.ACCEL: 6, StreamType.AUDIO: 2, StreamType.LOG: 1}
+SCORE = struct.Struct("<BBBx3f3f")  # stream, phase, alert bits, pad, three scores, three thresholds
+PHASES = ("idle", "ranges", "bundle", "calibrate", "detect")
+MODELS = ("mahalanobis", "hdc-binary", "hdc-bipolar")
+
+BYTES_PER_SAMPLE = {
+    StreamType.ACCEL: 6,
+    StreamType.AUDIO: 2,
+    StreamType.LOG: 1,
+    StreamType.SCORE: SCORE.size,
+}
 
 
 def crc16(data: bytes | bytearray) -> int:

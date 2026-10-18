@@ -11,13 +11,12 @@ from typing import Literal
 import numpy as np
 
 from mhm import REPO_ROOT
+from mhm.capture.frame import MODELS, PHASES
 
 FIRMWARE_DIR = REPO_ROOT / "firmware" / "node"
 NATIVE_BUILD = FIRMWARE_DIR / ".pio" / "build" / "native"
 CLI = NATIVE_BUILD / ("program.exe" if sys.platform == "win32" else "program")
 FEATURE_WIDTH = {"accel": 33, "audio": 45}
-PHASES = ("idle", "ranges", "bundle", "calibrate", "detect")
-MODELS = ("mahalanobis", "hdc-binary", "hdc-bipolar")
 
 Kind = Literal["accel", "audio"]
 
@@ -82,3 +81,21 @@ def replay(
         scores=rows[:, 3:6],
         thresholds=rows[:, 6:9],
     )
+
+
+def summarize(r: Replay, offset_s: float = 0.0) -> str:
+    """Phase lengths, then each model's threshold and alert rate while detecting."""
+    present = [(i, name) for i, name in enumerate(PHASES) if np.any(r.phase == i)]
+    lines = ["  blocks: " + ", ".join(f"{name} {np.sum(r.phase == i)}" for i, name in present)]
+    detect = r.phase == PHASES.index("detect")
+    if not detect.any():
+        lines.append("  never reached detect: recording shorter than learning plus calibration")
+        return "\n".join(lines)
+    for m, model in enumerate(MODELS):
+        alerts = r.alerts[detect, m]
+        first = f", first at {r.t[detect][alerts][0] + offset_s:.1f} s" if alerts.any() else ""
+        lines.append(
+            f"  {model:<12} threshold {r.thresholds[detect][0, m]:.4g},"
+            f" alerts in {alerts.mean():.0%} of {detect.sum()} detect blocks{first}"
+        )
+    return "\n".join(lines)

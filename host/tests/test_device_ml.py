@@ -7,8 +7,9 @@ import numpy as np
 import pytest
 
 from mhm import device_ml
-from mhm.capture.frame import FrameParser, StreamType
+from mhm.capture.frame import PHASES, FrameParser, StreamType
 from mhm.capture.simulate import FakeNode, SimConfig
+from mhm.cli import main
 from mhm.features.audio import AudioConfig, audio_features
 from mhm.features.framing import frames
 from mhm.features.vibration import VibrationConfig, vibration_features
@@ -86,9 +87,21 @@ def test_detector_learns_normal_then_flags_unbalance(kind):
     r = device_ml.replay(kind, x, learn_s=30, calibrate_s=15)
 
     assert np.all(np.diff(r.phase) >= 0)  # ranges, bundle, calibrate, detect, in order
-    detect = r.phase == device_ml.PHASES.index("detect")
+    detect = r.phase == PHASES.index("detect")
     assert np.all(r.thresholds[detect] > 0)
     normal_blocks, fault_blocks = detect & (r.t <= 70), r.t > 71
     assert normal_blocks.sum() >= 20 and fault_blocks.sum() >= 15
     assert np.all(r.alerts[normal_blocks].mean(axis=0) <= 0.1)
     assert np.all(r.alerts[fault_blocks].mean(axis=0) >= 0.9)
+
+
+def test_replay_command_on_a_capture(tmp_path, capsys):
+    normal = itertools.takewhile(lambda t: t[0] <= 60, FakeNode(SimConfig(seed=1)).frames())
+    faulty = itertools.takewhile(
+        lambda t: t[0] <= 20, FakeNode(SimConfig(seed=2, unbalance=True)).frames()
+    )
+    path = tmp_path / "sim_mixed_1500rpm_20261018_01.bin"
+    path.write_bytes(b"".join(d for _, d in itertools.chain(normal, faulty)))
+    main(["replay", str(path), "--learn", "30", "--calibrate", "15"])
+    out = capsys.readouterr().out
+    assert out.count("first at 6") == 6  # every model on both streams first alerts after 60 s

@@ -8,6 +8,7 @@ import numpy as np
 from mhm.capture.frame import (
     ACCEL_FS,
     AUDIO_FS,
+    SCORE,
     Frame,
     FrameParser,
     SequenceTracker,
@@ -31,12 +32,38 @@ class Stream:
 
 
 @dataclass
+class Scores:
+    """The node's per-block detector results, one row per score frame."""
+
+    t_us: np.ndarray  # node time each result was sent
+    stream: np.ndarray  # StreamType.ACCEL or StreamType.AUDIO
+    phase: np.ndarray  # index into frame.PHASES
+    alerts: np.ndarray  # (n, 3) bool, columns as frame.MODELS
+    scores: np.ndarray  # (n, 3)
+    thresholds: np.ndarray  # (n, 3), 0 until calibration ends
+
+
+@dataclass
 class Capture:
     accel: Stream
     audio: Stream
+    scores: Scores
     log: list[str]
     crc_errors: int
     dropped: dict[StreamType, int]
+
+
+def scores_from_frames(frames: list[Frame]) -> Scores:
+    rows = np.array([SCORE.unpack(f.payload) for f in frames], np.float64).reshape(-1, 9)
+    bits = rows[:, 2].astype(int)
+    return Scores(
+        t_us=np.array([f.timestamp_us for f in frames], np.int64),
+        stream=rows[:, 0].astype(int),
+        phase=rows[:, 1].astype(int),
+        alerts=np.stack([(bits >> m) & 1 for m in range(3)], axis=1).astype(bool),
+        scores=rows[:, 3:6],
+        thresholds=rows[:, 6:9],
+    )
 
 
 def stream_from_frames(frames: list[Frame], kind: StreamType) -> Stream:
@@ -68,6 +95,7 @@ def load_capture(path: Path) -> Capture:
     return Capture(
         accel=stream_from_frames(by_kind[StreamType.ACCEL], StreamType.ACCEL),
         audio=stream_from_frames(by_kind[StreamType.AUDIO], StreamType.AUDIO),
+        scores=scores_from_frames(by_kind[StreamType.SCORE]),
         log=[f.payload.decode("utf-8", errors="replace") for f in by_kind[StreamType.LOG]],
         crc_errors=parser.crc_errors,
         dropped=tracker.dropped,

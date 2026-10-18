@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mhm.capture.frame import HEADER, StreamType, encode
+from mhm.capture.frame import HEADER, PHASES, SCORE, StreamType, encode
 from mhm.capture.loader import load_capture
 
 
@@ -51,3 +51,18 @@ def test_loader_handles_missing_stream(tmp_path: Path):
     assert cap.accel.samples.shape == (0, 3)
     assert cap.audio.samples.shape == (0, 1)
     assert cap.accel.segments() == []
+
+
+def test_loader_reads_score_frames(tmp_path: Path):
+    payload = SCORE.pack(
+        StreamType.AUDIO, PHASES.index("detect"), 0b101, 3.5, 0.2, 0.1, 2.0, 0.3, 0.05
+    )
+    path = tmp_path / "scores.bin"
+    path.write_bytes(encode(StreamType.SCORE, 0, 9_000_000, payload))
+    scores = load_capture(path).scores
+    assert scores.stream.tolist() == [StreamType.AUDIO]
+    assert scores.phase.tolist() == [PHASES.index("detect")]
+    assert scores.alerts.tolist() == [[True, False, True]]
+    np.testing.assert_allclose(scores.scores, [[3.5, 0.2, 0.1]], rtol=1e-6)
+    np.testing.assert_allclose(scores.thresholds, [[2.0, 0.3, 0.05]], rtol=1e-6)
+    assert scores.t_us.tolist() == [9_000_000]
