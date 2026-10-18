@@ -1,0 +1,8 @@
+{
+  "name": "ml",
+  "version": "0.1.0",
+  "description": "On-device features and anomaly models, mirroring host/mhm",
+  "build": {
+    "flags": ["-Wall", "-Wextra"]
+  }
+}

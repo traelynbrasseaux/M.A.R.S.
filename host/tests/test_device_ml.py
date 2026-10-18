@@ -12,6 +12,8 @@ from mhm.capture.simulate import FakeNode, SimConfig
 from mhm.features.audio import AudioConfig, audio_features
 from mhm.features.framing import frames
 from mhm.features.vibration import VibrationConfig, vibration_features
+from mhm.models.hdc import HdcScorer
+from mhm.models.mahalanobis import Mahalanobis
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -52,3 +54,21 @@ def test_audio_features_match(simulated):
     np.testing.assert_allclose(
         device_ml.features("audio", simulated[1], cfg.fs), expected, atol=1e-4
     )
+
+
+@pytest.mark.parametrize("kind", ["accel", "audio"])
+def test_models_match(simulated, kind):
+    signal = simulated[0] if kind == "accel" else simulated[1]
+    fs = 3200.0 if kind == "accel" else 16000.0
+    # Round to float32 first so both sides see exactly the same feature values.
+    x = device_ml.features(kind, signal, fs).astype(np.float32).astype(np.float64)
+    third = len(x) // 3
+    stats, bundle, test = x[:third], x[third : 2 * third], x[2 * third :]
+    got = device_ml.scores(stats, bundle, test)
+
+    mahalanobis = Mahalanobis().fit(np.vstack([stats, bundle])).score(test)
+    binary = HdcScorer(mode="binary").fit_quantizer(stats).bundle(bundle).score(test)
+    bipolar = HdcScorer(mode="bipolar").fit_quantizer(stats).bundle(bundle).score(test)
+    np.testing.assert_allclose(got[:, 0], mahalanobis, rtol=1e-3)
+    np.testing.assert_array_equal(got[:, 1], binary.astype(np.float32))
+    np.testing.assert_allclose(got[:, 2], bipolar, atol=1e-6)

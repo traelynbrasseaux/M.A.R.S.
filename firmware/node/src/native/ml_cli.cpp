@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "features.h"
+#include "hdc.h"
+#include "mahalanobis.h"
 
 namespace {
 
@@ -63,10 +65,55 @@ int features(char** argv) {
   return 0;
 }
 
+// score <n> <stats.f32> <bundle.f32> <test.f32> <out.f32>: learn in the node's two phases, then
+// write mahalanobis, hdc binary and hdc bipolar scores for each test window.
+int score(char** argv) {
+  static ml::ItemMemory memory;
+  static ml::HdcModel hdc;
+  static ml::MahalanobisModel mahalanobis;
+  const size_t n = static_cast<size_t>(atoi(argv[2]));
+  const std::vector<float> stats = readAll<float>(argv[3]);
+  const std::vector<float> bundle = readAll<float>(argv[4]);
+  const std::vector<float> test = readAll<float>(argv[5]);
+
+  memory.generate(ml::kSeed);
+  hdc.begin(n);
+  mahalanobis.begin(n);
+  for (size_t i = 0; i + n <= stats.size(); i += n) {
+    hdc.observe(&stats[i]);
+    mahalanobis.observe(&stats[i]);
+  }
+  hdc.finishRanges();
+  for (size_t i = 0; i + n <= bundle.size(); i += n) {
+    hdc.bundle(memory, &bundle[i]);
+    mahalanobis.observe(&bundle[i]);
+  }
+  hdc.finish(memory);
+  if (!mahalanobis.finish()) {
+    fprintf(stderr, "covariance is not positive definite\n");
+    return 3;
+  }
+
+  std::vector<float> out;
+  for (size_t i = 0; i + n <= test.size(); i += n) {
+    float binary = 0;
+    float bipolar = 0;
+    hdc.score(memory, &test[i], binary, bipolar);
+    out.push_back(mahalanobis.score(&test[i]));
+    out.push_back(binary);
+    out.push_back(bipolar);
+  }
+  writeAll(argv[6], out);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc == 6 && strcmp(argv[1], "features") == 0) return features(argv);
-  fprintf(stderr, "usage: ml_cli features <accel|audio> <fs> <in.f32> <out.f32>\n");
+  if (argc == 7 && strcmp(argv[1], "score") == 0) return score(argv);
+  fprintf(stderr,
+          "usage: ml_cli features <accel|audio> <fs> <in.f32> <out.f32>\n"
+          "       ml_cli score <n> <stats.f32> <bundle.f32> <test.f32> <out.f32>\n");
   return 1;
 }

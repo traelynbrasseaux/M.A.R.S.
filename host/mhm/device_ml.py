@@ -41,3 +41,13 @@ def features(kind: Kind, signal: np.ndarray, fs: float) -> np.ndarray:
         np.asarray(signal, "<f4").tofile(src)
         run("features", kind, fs, src, dst)
         return np.fromfile(dst, "<f4").reshape(-1, FEATURE_WIDTH[kind]).astype(np.float64)
+
+
+def scores(stats: np.ndarray, bundle: np.ndarray, test: np.ndarray) -> np.ndarray:
+    """Learn in the node's two phases, then score test windows: mahalanobis, hdc binary, bipolar."""
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = [Path(tmp) / f"{name}.f32" for name in ("stats", "bundle", "test", "out")]
+        for path, x in zip(paths, (stats, bundle, test), strict=False):
+            np.asarray(x, "<f4").tofile(path)
+        run("score", stats.shape[1], *paths)
+        return np.fromfile(paths[3], "<f4").reshape(-1, 3).astype(np.float64)
