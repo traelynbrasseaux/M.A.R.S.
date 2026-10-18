@@ -1,58 +1,32 @@
-// Sensor node: sample the ADXL345 and INMP441 and stream both as frames over UART0.
+// Sensor node: sample the ADXL345 and INMP441, stream both as frames over UART0, and run the
+// on-device detectors on the same samples.
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
-#include <stdarg.h>
 
 #include <atomic>
 
 #include "adxl345.h"
 #include "frame.h"
 #include "inmp441.h"
+#include "ml_task.h"
 #include "pins.h"
+#include "uplink.h"
 
 namespace {
 
 constexpr uint32_t kBaud = 921600;
 constexpr uint8_t kAccelDrainAt = 16;  // half the FIFO, so a late poll still has 5 ms of slack
 constexpr uint32_t kHealthPeriodMs = 10000;
+constexpr uint32_t kDebounceMs = 50;
 
 // VSPI for the accelerometer leaves HSPI free for the LoRa module, so radio traffic never stalls it.
 SPIClass accelSpi(VSPI);
 Adxl345 accel(accelSpi, PIN_ADXL_CS);
 Inmp441 mic;
 
-QueueHandle_t txQueue;
-std::atomic<uint32_t> queueDrops{0};
 std::atomic<uint32_t> accelOverruns{0};
 std::atomic<uint32_t> audioOverruns{0};
-uint32_t logSeq = 0;
-
-// Never blocks: if the queue is full the frame is dropped and the host sees a sequence gap.
-void send(frame::Stream stream, uint32_t seq, int64_t timestampUs, const void* payload,
-          size_t len) {
-  frame::Frame f;
-  frame::encode(f, stream, seq, static_cast<uint64_t>(timestampUs), payload, len);
-  if (xQueueSend(txQueue, &f, 0) != pdTRUE) queueDrops++;
-}
-
-void logf(const char* fmt, ...) {
-  char text[160];
-  va_list args;
-  va_start(args, fmt);
-  const int n = vsnprintf(text, sizeof text, fmt, args);
-  va_end(args);
-  if (n > 0) {
-    const size_t len = min(static_cast<size_t>(n), sizeof text - 1);
-    send(frame::Stream::Log, logSeq++, esp_timer_get_time(), text, len);
-  }
-}
-
-void txTask(void*) {
-  frame::Frame f;
-  for (;;) {
-    if (xQueueReceive(txQueue, &f, portMAX_DELAY) == pdTRUE) Serial.write(f.bytes, f.len);
-  }
-}
 
 void accelTask(void*) {
   int16_t samples[frame::kAccelSamples * 3];
@@ -77,6 +51,7 @@ void accelTask(void*) {
       samples[3 * n + 2] = s.z;
       if (++n == frame::kAccelSamples) {
         send(frame::Stream::Accel, seq++, frameStartUs, samples, sizeof samples);
+        mlFeed(ml::Kind::Accel, samples, frame::kAccelSamples);
         n = 0;
       }
     }
@@ -91,6 +66,7 @@ void audioTask(void*) {
     // The block completed just now, so its first sample is one block (62.5 us each) older.
     const int64_t startUs = esp_timer_get_time() - static_cast<int64_t>(Inmp441::kBlock) * 125 / 2;
     send(frame::Stream::Audio, seq++, startUs, samples, sizeof samples);
+    mlFeed(ml::Kind::Audio, samples, Inmp441::kBlock);
     audioOverruns += mic.takeOverruns();
   }
 }
@@ -115,20 +91,74 @@ void startAudio() {
   logf("inmp441 ok, 16 kHz");
 }
 
+// Commands arrive as newline-terminated text on the same UART the frames leave on.
+void readCommands() {
+  static char line[48];
+  static size_t len = 0;
+  while (Serial.available() > 0) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\n' || c == '\r') {
+      if (len > 0) {
+        line[len] = '\0';
+        mlCommand(line);
+        len = 0;
+      }
+    } else if (len < sizeof line - 1) {
+      line[len++] = c;
+    }
+  }
+}
+
+void readButton(uint32_t nowMs) {
+  static bool wasDown = false;
+  static uint32_t changedMs = 0;
+  const bool down = digitalRead(PIN_BUTTON) == LOW;
+  if (down == wasDown || nowMs - changedMs < kDebounceMs) return;
+  wasDown = down;
+  changedMs = nowMs;
+  if (down) mlCommand("learn");
+}
+
+void showStatus(uint32_t nowMs) {
+  const bool blink = (nowMs / 250) % 2 == 0;
+  digitalWrite(PIN_LED, mlAlert() || (mlLearning() && blink) ? HIGH : LOW);
+}
+
+void logHealth() {
+  char ml[96];
+  mlHealth(ml, sizeof ml);
+  logf("health: accel fifo overruns %u, audio dma overruns %u, tx drops %u, heap %u free "
+       "(%u largest); %s",
+       static_cast<unsigned>(accelOverruns.load()), static_cast<unsigned>(audioOverruns.load()),
+       static_cast<unsigned>(uplinkDrops()), static_cast<unsigned>(ESP.getFreeHeap()),
+       static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)), ml);
+}
+
 }  // namespace
 
 void setup() {
-  Serial.setTxBufferSize(4096);
-  Serial.begin(kBaud);
-  txQueue = xQueueCreate(16, sizeof(frame::Frame));
-  xTaskCreatePinnedToCore(txTask, "tx", 4096, nullptr, 3, nullptr, 0);
+  uplinkBegin(kBaud);
   logf("mhm node, frame format v%u", frame::kVersion);
+  pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
+  if (mlBegin()) {
+    logf("ml ready: send \"learn [seconds] [calibrate seconds]\" or press BOOT to learn normal");
+  } else {
+    logf("ml: not enough memory, detection disabled");
+  }
   startAccel();
   startAudio();
 }
 
 void loop() {
-  vTaskDelay(pdMS_TO_TICKS(kHealthPeriodMs));
-  logf("health: accel fifo overruns %u, audio dma overruns %u, tx queue drops %u",
-       accelOverruns.load(), audioOverruns.load(), queueDrops.load());
+  static uint32_t lastHealthMs = 0;
+  const uint32_t nowMs = millis();
+  readCommands();
+  readButton(nowMs);
+  showStatus(nowMs);
+  if (nowMs - lastHealthMs >= kHealthPeriodMs) {
+    lastHealthMs = nowMs;
+    logHealth();
+  }
+  vTaskDelay(pdMS_TO_TICKS(20));
 }

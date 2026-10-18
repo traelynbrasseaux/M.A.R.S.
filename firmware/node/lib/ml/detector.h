@@ -36,6 +36,7 @@ class StreamDetector {
   void stop();
   void setMargin(float margin);
   Phase phase() const { return phase_; }
+  const float* thresholds() const { return thresholds_; }
 
  private:
   bool onWindow(BlockResult& out);

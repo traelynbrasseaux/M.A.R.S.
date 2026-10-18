@@ -22,6 +22,8 @@ static size_t bytesPerSample(Stream stream) {
       return 3 * sizeof(int16_t);
     case Stream::Audio:
       return sizeof(int16_t);
+    case Stream::Score:
+      return kScoreBytes;
     case Stream::Log:
       break;
   }

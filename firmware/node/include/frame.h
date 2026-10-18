@@ -10,7 +10,10 @@ constexpr uint8_t kVersion = 1;
 constexpr size_t kHeaderSize = 18;
 constexpr size_t kTrailerSize = 2;
 
-enum class Stream : uint8_t { Accel = 1, Audio = 2, Log = 3 };
+enum class Stream : uint8_t { Accel = 1, Audio = 2, Log = 3, Score = 4 };
+
+// One detector block: kind, phase, alert bits, a pad byte, then three scores and three thresholds.
+constexpr size_t kScoreBytes = 4 + 6 * sizeof(float);
 
 constexpr size_t kAccelSamples = 32;   // 10 ms at 3200 Hz
 constexpr size_t kAudioSamples = 256;  // 16 ms at 16 kHz
