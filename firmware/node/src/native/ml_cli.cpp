@@ -6,7 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "detector.h"
 #include "features.h"
+#include "frame.h"
 #include "hdc.h"
 #include "mahalanobis.h"
 
@@ -107,13 +109,45 @@ int score(char** argv) {
   return 0;
 }
 
+// replay <accel|audio> <in.i16> <learn_s> <calibrate_s> <margin> <out.f32>: the firmware's own
+// detector, fed in the firmware's block sizes and learning from t = 0. One row per finished block:
+// t, phase, alerts, three scores, three thresholds.
+int replay(char** argv) {
+  static ml::ItemMemory memory;
+  static ml::FeatureExtractor fx;
+  const bool accel = std::string(argv[2]) == "accel";
+  static ml::StreamDetector detector(accel ? ml::Kind::Accel : ml::Kind::Audio, memory, fx);
+  const std::vector<int16_t> x = readAll<int16_t>(argv[3]);
+  const size_t channels = accel ? 3 : 1;
+  const size_t block = accel ? frame::kAccelSamples : frame::kAudioSamples;
+  const float fs = accel ? ml::kAccelFs : ml::kAudioFs;
+
+  memory.generate(ml::kSeed);
+  detector.setMargin(static_cast<float>(atof(argv[6])));
+  detector.learn(static_cast<float>(atof(argv[4])), static_cast<float>(atof(argv[5])));
+  std::vector<float> out;
+  ml::BlockResult r;
+  for (size_t i = 0; (i + block) * channels <= x.size(); i += block) {
+    if (!detector.push(&x[i * channels], block, r)) continue;
+    out.push_back((i + block) / fs);
+    out.push_back(static_cast<float>(r.phase));
+    out.push_back(r.alerts);
+    for (size_t m = 0; m < ml::kModels; m++) out.push_back(r.scores[m]);
+    for (size_t m = 0; m < ml::kModels; m++) out.push_back(r.thresholds[m]);
+  }
+  writeAll(argv[7], out);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc == 6 && strcmp(argv[1], "features") == 0) return features(argv);
   if (argc == 7 && strcmp(argv[1], "score") == 0) return score(argv);
+  if (argc == 8 && strcmp(argv[1], "replay") == 0) return replay(argv);
   fprintf(stderr,
           "usage: ml_cli features <accel|audio> <fs> <in.f32> <out.f32>\n"
-          "       ml_cli score <n> <stats.f32> <bundle.f32> <test.f32> <out.f32>\n");
+          "       ml_cli score <n> <stats.f32> <bundle.f32> <test.f32> <out.f32>\n"
+          "       ml_cli replay <accel|audio> <in.i16> <learn_s> <calibrate_s> <margin> <out.f32>\n");
   return 1;
 }

@@ -72,3 +72,23 @@ def test_models_match(simulated, kind):
     np.testing.assert_allclose(got[:, 0], mahalanobis, rtol=1e-3)
     np.testing.assert_array_equal(got[:, 1], binary.astype(np.float32))
     np.testing.assert_allclose(got[:, 2], bipolar, atol=1e-6)
+
+
+@pytest.mark.parametrize("kind", ["accel", "audio"])
+def test_detector_learns_normal_then_flags_unbalance(kind):
+    fs = 3200 if kind == "accel" else 16000
+    normal = FakeNode(SimConfig(seed=1))
+    faulty = FakeNode(SimConfig(seed=2, unbalance=True))
+    if kind == "accel":
+        x = np.concatenate([normal.accel(0, 70 * fs), faulty.accel(0, 20 * fs)])
+    else:
+        x = np.concatenate([normal.audio(0, 70 * fs), faulty.audio(0, 20 * fs)])
+    r = device_ml.replay(kind, x, learn_s=30, calibrate_s=15)
+
+    assert np.all(np.diff(r.phase) >= 0)  # ranges, bundle, calibrate, detect, in order
+    detect = r.phase == device_ml.PHASES.index("detect")
+    assert np.all(r.thresholds[detect] > 0)
+    normal_blocks, fault_blocks = detect & (r.t <= 70), r.t > 71
+    assert normal_blocks.sum() >= 20 and fault_blocks.sum() >= 15
+    assert np.all(r.alerts[normal_blocks].mean(axis=0) <= 0.1)
+    assert np.all(r.alerts[fault_blocks].mean(axis=0) >= 0.9)

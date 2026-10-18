@@ -47,7 +47,7 @@ class HdcModel {
   double lo_[kMaxFeatures];
   double width_[kMaxFeatures];
   uint8_t ones_[kDim];          // bound vectors voting 1 at each position, for one window
-  uint32_t votes_[kDim];        // bundled windows whose majority bit was 1
+  uint16_t votes_[kDim];        // bundled windows whose majority bit was 1, so at most 65535
   int32_t prototypeSum_[kDim];  // bipolar prototype
   uint32_t prototype_[kWords];  // binary prototype
   double prototypeNorm_ = 0;
