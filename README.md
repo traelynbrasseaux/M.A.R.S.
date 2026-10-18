@@ -56,6 +56,25 @@ uv run mhm capture --port COM5 --machine fan1 --condition normal --speed 1500rpm
 
 The live summary shows frames per second per stream (expect 100 accel and 62.5 audio), CRC errors, and dropped frames. Lines starting with `[node]` are log frames from the firmware, for example a sensor that failed to come up. Naming, vocabulary, and the recording routine are in [capture-conventions.md](docs/capture-conventions.md).
 
+`--port` also takes pyserial URLs such as `socket://host:port` or `rfc2217://host:port`, so capture and `--send` work unchanged through a serial-over-network bridge.
+
+## On-device detection
+
+The node runs the same features and models as `host/mhm`, ported to C++ in `firmware/node/lib/ml`, and learns normal from live data. A test run:
+
+```bash
+uv run mhm capture --port COM5 --machine fan1 --condition normal --speed 1500rpm --run 1 \
+  --duration 300 --send "learn 60 30"
+```
+
+The node learns for 60 s (30 s measuring each feature's range, 30 s building the HDC prototype and Mahalanobis statistics), calibrates its thresholds for 30 s, then detects. `[ml]` lines in the live output show each phase change and any alert, and the capture keeps the node's per-second scores alongside the raw data. The BOOT button starts the same sequence, and the LED blinks while learning and lights on an alert. All commands are in [interface.md](docs/interface.md#commands).
+
+Checking the C++ on the PC, no board needed:
+
+- `uv run pytest` builds `lib/ml` for the PC (`pio run -e native`) and checks it against the Python: features match to float32 rounding, HDC binary scores bit for bit, Mahalanobis within 0.1%. Without `pio` on PATH those tests skip.
+- `uv run python scripts/evaluate.py mimii --backend device` runs an evaluation through the C++ instead of the Python.
+- `uv run mhm replay data/captures/<file>.bin --learn 60 --calibrate 30` feeds a raw capture through the node's own detector and reports what it would have flagged. Use it to try other learn times or margins on a real recording without recording again.
+
 ## Public datasets
 
 ```bash
@@ -79,8 +98,9 @@ uv run ruff check . && uv run ruff format --check .
 
 ```bash
 cd firmware/node
-pio run                  # build
+pio run                  # build for the board
 pio run -t upload        # flash over USB
+pio run -e native        # build lib/ml for the PC, which the host tests use
 ```
 
 Windows and macOS may need the Silicon Labs CP210x driver before the board shows up as a serial port. Pins are in `include/pins.h`, and the wiring table is in [interface.md](docs/interface.md#pin-map). At boot the node reports each sensor in a log frame; if one fails its check (for example the ADXL345 ID read), the node says so and keeps streaming the other.

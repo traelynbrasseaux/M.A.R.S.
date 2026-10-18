@@ -1,11 +1,11 @@
 # Node to host interface
 
-This is the contract between the node firmware (`firmware/node/`) and the host tools (`host/mhm/capture/`). If you change anything here, bump `VERSION` in both `firmware/node/include/frame.h` and `host/mhm/capture/frame.py`.
+This is the contract between the node firmware (`firmware/node/`) and the host tools (`host/mhm/capture/`). If you change an existing field or stream here, bump `VERSION` in both `firmware/node/include/frame.h` and `host/mhm/capture/frame.py`. A new stream type is additive and keeps the version, because older parsers skip frames they don't know.
 
 ## Link
 
 - UART0 through the dev board's CP2102 USB-UART chip, 921600 baud, 8N1, no flow control. 921600 is at the top of the CP2102's range, so don't plan on raising the baud rate later. Windows and macOS may need the Silicon Labs CP210x driver.
-- The node streams binary frames continuously from boot. There is no command channel yet.
+- The node streams binary frames continuously from boot. The host can send text commands the other way (see [Commands](#commands)).
 - The ROM bootloader prints text at 115200 baud on reset. The host parser skips anything that is not a valid frame, so that text is harmless.
 
 ## Frame format (version 1)
@@ -16,7 +16,7 @@ All multi-byte fields are little-endian (the ESP32's native order).
 |-------:|-----:|----------------|-------|
 | 0      | 2    | magic          | `0xA5 0x5A` |
 | 2      | 1    | version        | `1` |
-| 3      | 1    | stream         | `1` accel, `2` audio, `3` log |
+| 3      | 1    | stream         | `1` accel, `2` audio, `3` log, `4` score |
 | 4      | 4    | seq            | uint32, per stream, starts at 0 on boot, wraps at 2^32 |
 | 8      | 8    | timestamp_us   | uint64, node time of the first sample in the frame (see Timing) |
 | 16     | 2    | sample_count   | uint16, samples in the payload (see per-stream sizes) |
@@ -52,6 +52,37 @@ Header plus trailer is 20 bytes per frame.
 
 - UTF-8 text with no terminator, `N = sample_count` bytes, at most 1024.
 - Used for boot messages, sensor bring-up errors, and periodic node health counters. The UART carries only binary frames, so this is the only way the node can report text without corrupting the stream.
+- The health line every 10 s includes free heap and the largest free block, plus the worst time the detector took to process one frame of samples on each stream.
+
+### Score (stream 4)
+
+One frame per stream per detector block (about 1 s) while the detector is not idle. `sample_count` is 1 and the 28-byte payload is:
+
+| Offset | Size | Field | Notes |
+|-------:|-----:|-------|-------|
+| 0 | 1 | stream | `1` accel or `2` audio: which stream this block scored |
+| 1 | 1 | phase | `0` idle, `1` ranges, `2` bundle, `3` calibrate, `4` detect |
+| 2 | 1 | alerts | bit 0 Mahalanobis, bit 1 HDC binary, bit 2 HDC bipolar; only set in detect |
+| 3 | 1 | pad | 0 |
+| 4 | 12 | scores | three float32, the mean window score over the block, in the same model order; 0 while learning |
+| 16 | 12 | thresholds | three float32; 0 until calibration ends |
+
+The timestamp is when the node finished the block. Score frames add under 100 B/s.
+
+## Commands
+
+The host sends newline-terminated ASCII lines on the same UART. The node answers each one with a log frame. `mhm capture --send "..."` sends commands right after opening the port; any tool that can write to the serial port works too, including a pyserial URL such as `socket://` or `rfc2217://` for a remote bridge.
+
+| Command | Effect |
+|---------|--------|
+| `learn [learn_s] [calibrate_s]` | Start over on both streams: ranges for half of `learn_s`, bundle for the other half, then calibrate for `calibrate_s`, then detect. Defaults are 60 and 30. Pressing the BOOT button is `learn` with the defaults. |
+| `detect` | Resume detecting with the model already learned |
+| `stop` | Stop learning or detecting; raw streaming continues |
+| `margin <x>` | Threshold = highest calibration block score times `x` (default 1.2); applies right away |
+| `alert <mahalanobis\|binary\|bipolar>` | Which model drives the LED (default `mahalanobis`) |
+| `status` | Log each stream's phase, the margin, and the alert model |
+
+The LED blinks while learning or calibrating and stays lit while the chosen model is alerting on either stream. Learning lives in RAM only, so a reboot needs a new `learn`.
 
 ## Bandwidth
 
