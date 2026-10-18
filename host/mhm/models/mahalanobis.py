@@ -5,6 +5,8 @@ from typing import Self
 
 import numpy as np
 
+from mhm.models import feature_std
+
 
 @dataclass
 class Mahalanobis:
@@ -18,8 +20,7 @@ class Mahalanobis:
     def fit(self, normal_windows: np.ndarray) -> Self:
         x = np.asarray(normal_windows, np.float64)
         self.mean = x.mean(axis=0)
-        std = x.std(axis=0)
-        self.std = np.where(std > 0, std, 1.0)
+        self.std = feature_std(x)
         z = (x - self.mean) / self.std
         cov = z.T @ z / (len(z) - 1)
         # The ridge keeps the inverse stable when features are redundant, e.g. MFCCs of log mels.

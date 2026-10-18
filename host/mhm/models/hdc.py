@@ -6,6 +6,8 @@ from typing import Literal, Self
 
 import numpy as np
 
+from mhm.models import feature_std
+
 LFSR_TAPS = 0x80200003  # x^32 + x^22 + x^2 + x + 1, maximal length
 THRESHOLD_BITS = 16
 
@@ -62,10 +64,14 @@ class HdcScorer:
     prototype: np.ndarray = field(init=False, repr=False)
 
     def fit(self, normal_windows: np.ndarray) -> Self:
+        return self.fit_quantizer(normal_windows).bundle(normal_windows)
+
+    def fit_quantizer(self, normal_windows: np.ndarray) -> Self:
+        """Set each feature's level range; the node does this as its first learning phase."""
         x = np.asarray(normal_windows, np.float64)
-        std = x.std(axis=0)
+        std = feature_std(x)
         self.lo = x.mean(axis=0) - self.range_sigma * std
-        self.width = np.where(std > 0, 2 * self.range_sigma * std, 1.0)
+        self.width = 2 * self.range_sigma * std
         self.memory = item_memory(self.seed, self.dim, self.n_levels, x.shape[1])
         ids, levels = self.memory.ids, self.memory.levels
         match self.mode:
@@ -75,6 +81,11 @@ class HdcScorer:
                 # Bit b maps to (-1)^b, which turns the XOR binding into a product.
                 ids_pm, levels_pm = 1 - 2 * ids.astype(np.int8), 1 - 2 * levels.astype(np.int8)
                 self.bound = ids_pm[:, None, :] * levels_pm[None, :, :]
+        return self
+
+    def bundle(self, normal_windows: np.ndarray) -> Self:
+        """Bundle windows into the prototype with the quantizer already set; the second phase."""
+        x = np.asarray(normal_windows, np.float64)
         total = sum(e.sum(axis=0, dtype=np.int64) for e in self.encoded_chunks(x))
         self.prototype = self.majority(total, len(x)) if self.mode == "binary" else total
         return self
