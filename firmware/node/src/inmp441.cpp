@@ -9,8 +9,8 @@ esp_err_t Inmp441::begin(int sck, int ws, int sd) {
   config.mode = static_cast<i2s_mode_t>(I2S_MODE_MASTER | I2S_MODE_RX);
   config.sample_rate = kSampleRate;
   config.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
-  // L/R tied to GND puts the mic in the left slot. If capture is silent, try ONLY_RIGHT.
-  config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
+  // This hardware setup produces audio in the right slot; verify L/R wiring if changing slots.
+  config.channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT;
   config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
   config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
   config.dma_buf_count = 8;

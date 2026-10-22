@@ -75,6 +75,21 @@ Checking the C++ on the PC, no board needed:
 - `uv run python scripts/evaluate.py mimii --backend device` runs an evaluation through the C++ instead of the Python.
 - `uv run mhm replay data/captures/<file>.bin --learn 60 --calibrate 30` feeds a raw capture through the node's own detector and reports what it would have flagged. Use it to try other learn times or margins on a real recording without recording again.
 
+## Live microphone playback
+
+To hear the microphone through the computer's default audio output, run from `host/`:
+
+```bash
+uv run python scripts/listen.py --port COM3
+```
+
+Use headphones or low speaker volume to avoid feedback. Press Ctrl+C to stop.
+Optional `--gain 4` sets playback amplification and `--duration 20` limits playback
+to 20 seconds. Close the listener before running capture on the same serial port.
+The current hardware checkout receives audio using `I2S_CHANNEL_FMT_ONLY_RIGHT`;
+if changing the microphone's L/R wiring, match the firmware channel to the active slot.
+
+
 ## Public datasets
 
 ```bash
