@@ -8,7 +8,7 @@ constexpr int PIN_ADXL_MOSI = 23;  // module pin SDA
 constexpr int PIN_ADXL_CS = 5;
 constexpr int PIN_ADXL_INT1 = 34;  // wired but unused: the firmware polls FIFO_STATUS
 
-// INMP441 on I2S, with its L/R pin tied to GND for the left slot.
+// INMP441 on I2S; the active receive slot is configured in inmp441.cpp.
 constexpr int PIN_MIC_SCK = 26;
 constexpr int PIN_MIC_WS = 25;
 constexpr int PIN_MIC_SD = 33;

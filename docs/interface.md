@@ -177,6 +177,13 @@ The node is an ELEGOO ESP-WROOM-32 dev board (original ESP32, CP2102, USB-C). Pi
 | **Gateway board only** | | | |
 | OLED SDA / SCL | | 21 / 22 | SSD1306 display |
 
+The microphone L/R connection above selects the left slot per the module interface.
+During the current hardware checkout, the left receive setting produced all-zero
+samples and the right setting produced audible audio, so `inmp441.cpp` currently
+uses `I2S_CHANNEL_FMT_ONLY_RIGHT`. Verify the actual L/R connection and receive slot
+together when reproducing the setup; this observation does not change the module's
+documented channel selection.
+
 The map stays off the flash pins (6 to 11) and the boot strapping pins 12 and 15, and uses the input-only pins 34, 35 and 39 only for inputs. The ADXL345 needs SPI rather than I2C to keep up at 3200 Hz, and the accelerometer gets its own bus so LoRa traffic never stalls its reads.
 
 Wiring for clean data: screw or epoxy the ADXL345 module to a rigid plate on the magnet and run short wires (under about 20 cm) to a breadboard kept off the machine. A sensor sitting on a breadboard measures the breadboard, and long loose jumpers cause SPI errors at 5 MHz.

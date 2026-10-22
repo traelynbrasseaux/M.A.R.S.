@@ -1,4 +1,4 @@
-// INMP441 over I2S at 16 kHz, left slot, downshifted to int16 as in docs/interface.md.
+// INMP441 over I2S at 16 kHz, downshifted to int16 as in docs/interface.md.
 #pragma once
 
 #include <driver/i2s.h>
